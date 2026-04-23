@@ -1,0 +1,87 @@
+name: Build and release encrypted-content demo
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to publish when manually dispatched"
+        required: false
+        default: "manual-demo"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      PLAINTEXT_DIR: ${{ runner.temp }}/plaintext
+      PACKAGE_PATH: ${{ runner.temp }}/fullcitest-demo-${{ github.sha }}.tar.gz
+      SGC_ALLOW_ENV_KEYS: "1"
+      SGC_ALLOW_ENV_KEYS_IN_RELEASE: "1"
+      SGC_AGENT_REQUIRED: "0"
+      SGC_DEV_ROOT_KEY_HEX: ${{ secrets.SGC_DEV_ROOT_KEY_HEX }}
+
+    steps:
+      - name: Check out encrypted repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: false
+          submodules: false
+
+      - name: Install Blackbranch CLI
+        env:
+          BLACKBRANCH_INSTALL_COMMAND: ${{ secrets.BLACKBRANCH_INSTALL_COMMAND }}
+        run: |
+          set -euo pipefail
+          if ! command -v sgc >/dev/null 2>&1; then
+            if [ -z "${BLACKBRANCH_INSTALL_COMMAND:-}" ]; then
+              echo "::error::sgc is not installed. Set BLACKBRANCH_INSTALL_COMMAND to install the Blackbranch CLI on ubuntu-latest."
+              exit 1
+            fi
+            bash -euo pipefail -c "$BLACKBRANCH_INSTALL_COMMAND"
+          fi
+          sgc --help >/dev/null
+
+      - name: Materialize plaintext tree
+        run: |
+          set -euo pipefail
+          rm -rf "$PLAINTEXT_DIR"
+          sgc repo __migrate-out \
+            --src "$GITHUB_WORKSPACE" \
+            --dst "$PLAINTEXT_DIR" \
+            --mode snapshot \
+            --json
+
+      - name: Build and test from materialized plaintext
+        working-directory: ${{ runner.temp }}/plaintext
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests
+          python -m compileall -q app
+
+      - name: Package plaintext build output
+        working-directory: ${{ runner.temp }}/plaintext
+        run: |
+          set -euo pipefail
+          tar --exclude-vcs -czf "$PACKAGE_PATH" app tests pyproject.toml README.md
+          ls -lh "$PACKAGE_PATH"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fullcitest-demo-${{ github.sha }}
+          path: ${{ env.PACKAGE_PATH }}
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+          files: ${{ env.PACKAGE_PATH }}
