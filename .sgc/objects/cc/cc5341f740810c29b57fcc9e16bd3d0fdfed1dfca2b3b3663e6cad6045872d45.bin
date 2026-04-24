@@ -22,6 +22,7 @@ jobs:
     env:
       SGC_ALLOW_ENV_KEYS: "1"
       SGC_ALLOW_ENV_KEYS_IN_RELEASE: "1"
+      SGC_ALLOW_DEV: "1"
       SGC_AGENT_REQUIRED: "0"
       SGC_DEV_ROOT_KEY_HEX: ${{ secrets.SGC_DEV_ROOT_KEY_HEX }}
 
